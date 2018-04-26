@@ -23,7 +23,6 @@ use phpDocumentor\Reflection\Types\Null_;
 
 class UserController extends Controller
 {
-
     // Phone API
     // Resource function
     public function registerLoginREs( $status,$requestType,$message,Request $request){
@@ -249,7 +248,7 @@ class UserController extends Controller
         $diff_in_min = $to->diffInMinutes($from);
         $diff_in_hours_float = (float)($diff_in_min/60);
         $rem_min = ($diff_in_hours_float-$diff_in_hours)*60;
-        if($rem_min>30){
+        if($diff_in_hours>0 && $rem_min>30){
             $diff_in_hours++;
         }
         //end calculating time
@@ -271,7 +270,6 @@ class UserController extends Controller
         $reservation->delete();
         return 'done'; // this fuction should return nothing
     }
-
     public function getGarageClients($garag_id){
         /*
          * get GaragID from request
@@ -289,22 +287,6 @@ class UserController extends Controller
             ->get();
         return  GetGarageClientsResource::collection($data1);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     public function test(){
         $bindcard = new BindCard();
         $cards  = DB::table('cards')->where('user_id',24)->get();
