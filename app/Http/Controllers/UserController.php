@@ -13,6 +13,7 @@ use App\Http\Resources\MyCardsResource;
 use App\Http\Resources\testResource;
 use App\Login;
 use App\MakeReservation;
+use App\ParkingArea;
 use App\SystemCards;
 use App\User;
 use Carbon\Carbon;
@@ -268,6 +269,15 @@ class UserController extends Controller
             ->where('lat',$lat)->where('user_id',$user_id)->value('id');
         $reservation = MakeReservation::find($reservation_id);
         $reservation->delete();
+        //increase number of free slots for this garage
+        $no_of_free_slots = DB::table('parkingareas')->where('id',$garag_id)
+            ->value('no_of_free_slots');
+        $no_of_free_slots++;
+        $garage_slots_update=ParkingArea::find($garag_id);
+        if($garage_slots_update){
+            $garage_slots_update->no_of_free_slots=$no_of_free_slots;
+            $garage_slots_update->save();
+        }
         return 'done'; // this fuction should return nothing
     }
     public function getGarageClients($garag_id){
