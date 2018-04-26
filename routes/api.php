@@ -33,7 +33,7 @@ Route::post('/getGarages','UserController@getGarages');
 
 
 // Rasp Routing
-// Route::get('/CarWentOut/{garage_id}/{RFID_card}','UserController@CarWentOut');
+Route::get('/CarWentOut/{garage_id}/{RFID_card}','UserController@CarWentOut');
 
 Route::get('/getGarageClients/{garage_id}','UserController@getGarageClients');
 

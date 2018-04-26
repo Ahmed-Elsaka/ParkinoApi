@@ -12,8 +12,10 @@ use App\Http\Resources\LoginResource;
 use App\Http\Resources\MyCardsResource;
 use App\Http\Resources\testResource;
 use App\Login;
+use App\MakeReservation;
 use App\SystemCards;
 use App\User;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -226,9 +228,48 @@ class UserController extends Controller
         return new GetGaragesResource($bindcard);
     }
     //rasp API
-    public function CarWentOut($garage_id, $RFID_card){
-        //dd($garage_id, $RFID_card);
-
+    public function CarWentOut($garag_id, $user_RFID_card_no){
+        /*
+           	1-read garag_id and client_rfid from request
+            2-get user id using RFID from user_cards table
+            3-read startTime from created_at at reservation table using user_id
+            3-find the differece between current time and created_at
+            4-subtract userpoints and period(assuming 1hour = 1point)
+            5-update user points in users table using user_id
+            6-increase no of free slots in Parkingareas table
+         */
+        $user_id  = DB::table('user_cards')->where('card_no',$user_RFID_card_no)->value('user_id');
+        $startTimeofReservation = DB::table('make_reservations')->where('user_id',$user_id)->value('created_at');
+        if($startTimeofReservation==null) return 'there was not reservation for this user';
+        //caclute the time
+        $to = Carbon::createFromFormat('Y-m-d H:s:i',now());
+        $from = Carbon::createFromFormat('Y-m-d H:s:i', $startTimeofReservation);
+        $diff_in_hours = $to->diffInHours($from);
+        //if remaining minutes >30 increase hours with one
+        $diff_in_min = $to->diffInMinutes($from);
+        $diff_in_hours_float = (float)($diff_in_min/60);
+        $rem_min = ($diff_in_hours_float-$diff_in_hours)*60;
+        if($rem_min>30){
+            $diff_in_hours++;
+        }
+        //end calculating time
+        $user_points= DB::table('users')->where('id',$user_id)->value('points');
+        $remained_points  = $user_points - $diff_in_hours;
+        // update user points field in users table
+        $current_user = User::find($user_id);
+        if($current_user) {
+            $current_user->points =$remained_points;
+            $current_user->save();
+        }
+        //get long and lat related to garage id
+        $long  = DB::table('parkingareas')->where('id',$garag_id)->value('long');
+        $lat  = DB::table('parkingareas')->where('id',$garag_id)->value('lat');
+        // remove the reservation from make_reservation table
+        $reservation_id= DB::table('make_reservations')->where('long',$long)
+            ->where('lat',$lat)->where('user_id',$user_id)->value('id');
+        $reservation = MakeReservation::find($reservation_id);
+        $reservation->delete();
+        return 'done'; // this fuction should return nothing
     }
 
     public function getGarageClients($garag_id){
@@ -238,22 +279,8 @@ class UserController extends Controller
          * apply sql query
          * encode returned data to json
         */
-        $long  = DB::table('parkingareas')->where('id',$garag_id)->value('long');
-        $lat  = DB::table('parkingareas')->where('id',$garag_id)->value('lat');
-
-        /* pure sql command
-        $data=  DB::select(
-            DB::raw(
-                "SELECT name as firstName,
-                    card_no as RFID ,
-                    make_reservations.created_at as reservationTime,
-                    points as maxHours 
-                  FROM users, user_cards, make_reservations
-                   where users.id = user_cards.user_id 
-                   AND user_cards.user_id = make_reservations.user_id 
-                   AND make_reservations.long=1230 and make_reservations.lat=1230"));
-
-        */
+         $long  = DB::table('parkingareas')->where('id',$garag_id)->value('long');
+         $lat  = DB::table('parkingareas')->where('id',$garag_id)->value('lat');
         $data1= DB::table('users')
             ->join('user_cards', 'users.id', '=', 'user_cards.user_id')
             ->join('make_reservations', 'user_cards.user_id', '=', 'make_reservations.user_id')
