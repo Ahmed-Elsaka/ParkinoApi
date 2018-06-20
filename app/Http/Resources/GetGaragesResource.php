@@ -16,41 +16,36 @@ class GetGaragesResource extends JsonResource
     {
 
         return [
-            'status'=>1,
             [
                 "garage_id" => "12345666",
+                "garage_name"=>"Anwar Al Madinah",
                 "available" => "0" ,
                 "reserved" => "0" ,
                 "latitude" => "36.3658",
                 "longitude" => "30.963",
-                "image" => "http://google.com/image.jpeg",
-                "distance" => "5K",
-                "soltsnumber" => "10",
-                "price" => "5$",
+                "image" => "http://41.44.0.137:8000/sayed-fucken-test/1.jpg",
+                "distance" => "1km from centre",
+                "slotnumbers" => "40 Slots ",
+                "price" => "5P",
                 "stars" => "3",
-                "emptyslots" => "3",
+                "emptyslots" => "10",
             ],
             [
-            "garage_id"=> "12345666",
-            "available" => "0" ,
-            "reserved" => "0" ,
-            "latitude" => "36.3658",
-            "longitude" => "30.963",
-            "image" => "http://google.com/image.jpeg",
-            "distance" => "5K",
-            "soltsnumber" => "10",
-            "price" => "5$",
-            "stars" => "3",
-            "emptyslots" => "3",
+                "garage_id" => "12345666",
+                "garage_name"=>"Anwar Al Madinah",
+                "available" => "0" ,
+                "reserved" => "0" ,
+                "latitude" => "36.3658",
+                "longitude" => "30.963",
+                "image" => "http://zamep.eu/wp-content/uploads/2017/11/default-no-image.png",
+                "distance" => "0.6km from centre",
+                "slotnumbers" => "10 Slots",
+                "price" => "5P",
+                "stars" => "3",
+                "emptyslots" => "15",
             ]
 
         ];
-
-
-
-
-
-
 
     }
 }
