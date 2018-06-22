@@ -34,15 +34,21 @@ Route::post('/feedback','UserController@feedback'); // send feedback
 
 
 
+
 // test if Api working
 Route::get('/work','UserController@work');
 
 
 // Rasp Routing
+Route::get('/getNewReservations/{garage_id}','UserController@getNewReservations'); // send feedback40
 Route::get('/CarWentOut/{garage_id}/{RFID_card}','UserController@CarWentOut');
 
 Route::get('/getGarageClients/{garage_id}','UserController@getGarageClients');
 
+
+
+// Test
+Route::get('/test/{slot?}','UserController@test');
 
 
 

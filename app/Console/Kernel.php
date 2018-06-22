@@ -14,6 +14,7 @@ class Kernel extends ConsoleKernel
      */
     protected $commands = [
         //
+        Commands\HourlyUpdate::class
     ];
 
     /**
@@ -26,6 +27,9 @@ class Kernel extends ConsoleKernel
     {
         // $schedule->command('inspire')
         //          ->hourly();
+        $schedule->command('hour:update')->everyMinute();
+            //->hourly();
+
     }
 
     /**
@@ -35,6 +39,7 @@ class Kernel extends ConsoleKernel
      */
     protected function commands()
     {
+
         $this->load(__DIR__.'/Commands');
 
         require base_path('routes/console.php');
