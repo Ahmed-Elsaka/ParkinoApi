@@ -453,8 +453,7 @@ class UserController extends Controller
                 $points = 50;
             }elseif ($chargeAmout == 100100){
                 $points = 100;
-            }
-            else{
+            } else{
                 $bindcard->status = 0;
                 $bindcard->message = 'You don\'t have enough Money"  or "Invaild Credit Number"  or "Failed"';
                 return new ChangeInfoResource($bindcard);
@@ -470,6 +469,16 @@ class UserController extends Controller
                 $bindcard->status = 1;
                 $bindcard->message = ' Charged Successfully ';
                 return new ChangeInfoResource($bindcard);
+            }
+            /* if the user who charged have records in reservation table
+               i should update user points in rasp ;
+           */
+            $no_of_records = MakeReservation::where('user_id',$user_id)->count();
+            if($no_of_records > 0 ){
+                // udpate no of points on Rasp ;
+                $client = new Client();
+                $client->request('GET', '127.0.0.1:8000/api/test/'.$totalPoints);
+
             }
         }catch (\Exception $e){
             $bindcard->status = 0;
@@ -502,7 +511,7 @@ class UserController extends Controller
 
     }
     //rasp API
-    public function CarWentOut($garag_id, $user_RFID_card_no){
+    public function CarWentOut($garage_id, $user_RFID_card_no,$slot_num){
         /*
            	1-read garag_id and client_rfid from request
             2-get user id using RFID from user_cards table
@@ -513,7 +522,10 @@ class UserController extends Controller
             6-increase no of free slots in Parkingareas table
          */
         $user_id  = DB::table('user_cards')->where('card_no',$user_RFID_card_no)->value('user_id');
-        $startTimeofReservation = DB::table('make_reservations')->where('user_id',$user_id)->value('created_at');
+        $long = ParkingArea::where('id',$garage_id)->value('long');
+        $lat = ParkingArea::where('id',$garage_id)->value('lat');
+        $startTimeofReservation = DB::table('make_reservations')->where('user_id',$user_id)->where('slot',$slot_num)
+            ->where('long',$long)->where('lat',$lat)->value('created_at');
         if($startTimeofReservation==null) return 'there was not reservation for this user';
         //caclute the time
         $to = Carbon::createFromFormat('Y-m-d H:s:i',now());
@@ -536,24 +548,38 @@ class UserController extends Controller
             $current_user->points =$remained_points;
             $current_user->save();
         }
-        //get long and lat related to garage id
-        $long  = DB::table('parkingareas')->where('id',$garag_id)->value('long');
-        $lat  = DB::table('parkingareas')->where('id',$garag_id)->value('lat');
+
         // remove the reservation from make_reservation table
         $reservation_id= DB::table('make_reservations')->where('long',$long)
             ->where('lat',$lat)->where('user_id',$user_id)->value('id');
         $reservation = MakeReservation::find($reservation_id);
         $reservation->delete();
         //increase number of free slots for this garage
-        $no_of_free_slots = DB::table('parkingareas')->where('id',$garag_id)
+        $no_of_free_slots = DB::table('parkingareas')->where('id',$garage_id)
             ->value('no_of_free_slots');
         $no_of_free_slots++;
-        $garage_slots_update=ParkingArea::find($garag_id);
+        $garage_slots_update=ParkingArea::find($garage_id);
         if($garage_slots_update){
             $garage_slots_update->no_of_free_slots=$no_of_free_slots;
             $garage_slots_update->save();
         }
-        return 'done'; // this fuction should return nothing
+        // change the state of slot in GragesSlots table
+        $slot_id = grageSlotsModel::where('garage_id',$garage_id)->where('slot',$slot_num)->value('id');
+        $slot = grageSlotsModel::find($slot_id);
+        $slot->state = 1;  // indicate it is free ;
+        $slot->save();
+
+        //4- TEll RAsp to Cancel reservation
+        // send to Rasp to cancel reservation
+        $client = new Client();
+        $res = $client->request('GET', '127.0.0.1:8000/api/test/'.$slot_num);
+        // echo (string)$res->getBody();
+
+        // 5- delete reservation
+        $reservation_id = MakeReservation::where('long',$long)->where('lat',$lat)->where('slot',$slot_num);
+        $res = MakeReservation::find($reservation_id);
+        $res->delete();
+
     }
     public function getGarageClients($garag_id){
         /*
@@ -580,10 +606,10 @@ class UserController extends Controller
         $query = "select  users.name, users.points as Hours ,
                   make_reservations.slot,make_reservations.RFID_no, make_reservations.created_at as startTime from users
                   , make_reservations where users.id = make_reservations.user_id and make_reservations.long=".$long."
-                   and make_reservations.lat=".$lat. "and  make_reservations.state = 0";
+                   and make_reservations.lat=".$lat. " and  make_reservations.state = 0";
         $data = DB::select($query);
          $n  = count($data);
-         //change state of returned rows
+         //update state of returned rows
         for( $i = 0 ; $i < $n ; $i++){
             MakeReservation::where('slot', $data[$i]->slot)
                 ->where('RFID_no', $data[$i]->RFID_no)
@@ -592,8 +618,98 @@ class UserController extends Controller
         $newReserved = json_encode($data) ;
         return $newReserved;
     }
+    // reserve
+    public function reserveSlot(Request $request, MakeReservation $makeReservation)
+    {
+        /*
+         * inputs [ grage_id, user_id, reserve_type]
+         *  1- check if the use has no points -> tell him/her you must charge first
+         *  2- get free slot from GragesSlots Table and change it is state to 0 (busy);
+         *  3- insert reservation in reservation table
+         *
+         */
+        $user = User::find($request->user_id);
+        $points = $user->points;
+        $bindcard = new BindCard();  // just a model for json
+        if($points <1){
+            // you should charge
+            $bindcard->status = 0 ;
+            $bindcard->message = "you don't have enough balance , you should charge";
+            return new ChangeInfoResource($bindcard);
+        }else {
+            // 2- get free slot from GragesSlots Table and change it is state to 0 (busy);
+            $slot_id = grageSlotsModel::where('garage_id',$request->garage_id)->where('state',1)->value('slot');
+            $slot = grageSlotsModel::find($slot_id);
+            $slot->state = 0 ; // make this slot busy ;
+            $slot_num = $slot->slot;  // reserved slot number ;
+            $slot-save();
+            dd($slot_num);
+            // 3- insert reservation in reservation table
+            $long = ParkingArea::where('id',$request->garage_id)->value('long');
+            $lat = ParkingArea::where('id',$request->garage_id)->value('lat');
+            $reservation_type = $request->reserve_type ; // for hours mode
+            $hourly_tire = 0 ;
+            $monthly_tire = 0 ;
+            $annually_tire = 0 ;
+            $daily_tire = 0;
+            if($reservation_type == 0){ // hourly mode
+                $hourly_tire = 1;
+            }elseif ($reservation_type == 1){// monthly mode
+                $monthly_tire = 1;
+            }elseif ($reservation_type == 2){// annually mode
+                $annually_tire = 1;
+            }elseif ($reservation_type == 3){// daily mode
+                $daily_tire = 1;
+            }
+            $makeReservation->create([
+                'long' => $long,
+                'lat' =>$lat,
+                'user_id'=>$request->user_id,
+                'annually_tier' => $annually_tire,
+                'monthly_tier' => $monthly_tire,
+                'daily_tier' => $daily_tire,
+                'hourly_tier' =>$hourly_tire,
+                'state' => 0, // indicate the slot is not locked
+            ]);
+        }
 
-    public function CancelReservation($reservation_id = 0,$autoCancelation= 0 , $user_id = 0){
+            $bu = $user->where('email', $request->email)->count();
+            if($bu <1){
+                $user->create([
+                    'name' => $request->username,
+                    'email' => $request->email,
+                    'password' => Hash::make($request->password),
+                    'phone_number'=>$request->phone_number,
+                    //'password' => Hash::make($request->password),
+                ]);
+
+
+        }
+
+    }
+    //search for garage
+    public function searchForGrarage(Request $request)
+    {
+        $query_str = "SELECT id as garage_id, name as garage_name
+             , no_of_free_slots  as  emptyslots
+             , slots_no as slotnumbers
+             ,lat as latitude 
+             ,garagePhotosFolder as grageURL 
+             ,price, stars
+             , parkingareas.long as longitude
+             , 111.045 * DEGREES(ACOS(COS(RADIANS($request->latitude)) * COS(RADIANS(lat))
+              * COS(RADIANS(parkingareas.long) - RADIANS($request->longitude))
+              + SIN(RADIANS($request->latitude)) * SIN(RADIANS(lat)))) AS distance
+              FROM parkingareas 
+              where no_of_free_slots >= 1 and name LIKE $request->name
+               ORDER BY distance
+                ASC LIMIT 0,5
+            ";
+        $garages = json_encode(DB::select($query_str)) ;
+        return $garages;
+    }
+    // Cancel Reservation
+    public function CancelReservation($reservation_id = 0,$autoCancelation= 0 , $user_id = 0){ // Automatic
         // this function automatic Cancel Reservation when points finished;
 
 
@@ -614,7 +730,7 @@ class UserController extends Controller
 
         $car_status = (string) $res->getBody();
         if($car_status == "1"){   // the car is in
-           // do nothing , because he will lock the slot on the car
+            // tell Rasp to lock slot
         }else{  // the car is out
             //1- take balance
                 $Curr_user = User::find($user_id);
@@ -651,25 +767,98 @@ class UserController extends Controller
                 $res->delete();
         }
 
-    }
-    public function phoneCancellation( $autoCancellation = 0, $user_id=0)
+    } //Automatic Cancellation
+    public function phoneCancellation( Request $request)
     {
+        /*
+         * in this function the user can cancel reservation from the phone if the car is not in the garage
+         * STEPS:
+         *      1- check if the car in garage
+             *      YES : tell him the car in garage , you should take it out First
+         *          NO : Cancel Reservation
+         */
+        // INPUT : [ Grage_id , Slot ]
+        $client = new Client();
+        $res = $client->request('GET', '127.0.0.1:8000/api/test/garage_id/'.$request->slot);
+        $result = (string) $res->getBody();
+        $bindcard = new BindCard();
+        if($result == "1"){  // the car is in
+            $bindcard->status = 0;
+            $bindcard->message = 'Please Take the Car out First';
+            return new ChangeInfoResource($bindcard);
+        }else {
+            $user_id  = $request->user_id;
+            $long = ParkingArea::where('id',$request->garage_id)->value('long');
+            $lat = ParkingArea::where('id',$request->garage_id)->value('lat');
+            $startTimeofReservation = DB::table('make_reservations')->where('user_id',$user_id)->where('slot',$request->slot_num)
+                ->where('long',$long)->where('lat',$lat)->value('created_at');
+            if($startTimeofReservation==null) return 'there was not reservation for this user';
+            //caclute the time
+            $to = Carbon::createFromFormat('Y-m-d H:s:i',now());
+            $from = Carbon::createFromFormat('Y-m-d H:s:i', $startTimeofReservation);
+            $diff_in_hours = $to->diffInHours($from);
+            //if remaining minutes >30 increase hours with one
+            $diff_in_min = $to->diffInMinutes($from);
+            $diff_in_hours_float = (float)($diff_in_min/60);
+            $rem_min = ($diff_in_hours_float-$diff_in_hours)*60;
+            if($diff_in_hours>0 && $rem_min>30){
+                $diff_in_hours++;
+            }
+            //end calculating time
+            $user_points= DB::table('users')->where('id',$user_id)->value('points');
+            $remained_points  = $user_points - $diff_in_hours;
+            if($remained_points <0) return "the reamined points less than zero";
+            // update user points field in users table
+            $current_user = User::find($user_id);
+            if($current_user) {
+                $current_user->points =$remained_points;
+                $current_user->save();
+            }
+
+            // remove the reservation from make_reservation table
+            $reservation_id= DB::table('make_reservations')->where('long',$long)
+                ->where('lat',$lat)->where('user_id',$user_id)->value('id');
+            $reservation = MakeReservation::find($reservation_id);
+            $reservation->delete();
+            //increase number of free slots for this garage
+            $no_of_free_slots = DB::table('parkingareas')->where('id',$request->garage_id)
+                ->value('no_of_free_slots');
+            $no_of_free_slots++;
+            $garage_slots_update=ParkingArea::find($request->garage_id);
+            if($garage_slots_update){
+                $garage_slots_update->no_of_free_slots=$no_of_free_slots;
+                $garage_slots_update->save();
+            }
+            // change the state of slot in GragesSlots table
+            $slot_id = grageSlotsModel::where('garage_id',$request->garage_id)->where('slot',$request->slot_num)->value('id');
+            $slot = grageSlotsModel::find($slot_id);
+            $slot->state = 1;  // indicate it is free ;
+            $slot->save();
+
+            //4- TEll RAsp to Cancel reservation
+            // send to Rasp to cancel reservation
+            $client = new Client();
+            $res = $client->request('GET', '127.0.0.1:8000/api/test/'.$request->slot_num);
+            // echo (string)$res->getBody();
+
+            // 5- delete reservation
+            $reservation_id = MakeReservation::where('long',$long)->where('lat',$lat)->where('slot',$request->slot_num);
+            $res = MakeReservation::find($reservation_id);
+            $res->delete();
+        }
 
 
     }
     public function raspCalculations($garag_id, $user_RFID_card_no, $slot)
     {
-        /*
-             1-read garag_id and client_rfid from request
-          2-get user id using RFID from user_cards table
-          3-read startTime from created_at at reservation table using user_id
-          3-find the differece between current time and created_at
-          4-subtract userpoints and period(assuming 1hour = 1point)
-          5-update user points in users table using user_id
-          6-increase no of free slots in Parkingareas table
-       */
+
+        // get user id from RFID_no
+
         $user_id  = DB::table('user_cards')->where('card_no',$user_RFID_card_no)->value('user_id');
-        $startTimeofReservation = DB::table('make_reservations')->where('user_id',$user_id)->value('created_at');
+        $long = ParkingArea::where('id',$garag_id)->value('long');
+        $lat = ParkingArea::where('id',$garag_id)->value('lat');
+        $startTimeofReservation = DB::table('make_reservations')->where('user_id',$user_id)->where('slot',$slot)
+            ->where('long',$long)->where('lat',$lat)->value('created_at');
         if($startTimeofReservation==null) return 'there was not reservation for this user';
         //caclute the time
         $to = Carbon::createFromFormat('Y-m-d H:s:i',now());
@@ -692,9 +881,7 @@ class UserController extends Controller
             $current_user->points =$remained_points;
             $current_user->save();
         }
-        //get long and lat related to garage id
-        $long  = DB::table('parkingareas')->where('id',$garag_id)->value('long');
-        $lat  = DB::table('parkingareas')->where('id',$garag_id)->value('lat');
+
         // remove the reservation from make_reservation table
         $reservation_id= DB::table('make_reservations')->where('long',$long)
             ->where('lat',$lat)->where('user_id',$user_id)->value('id');
@@ -709,13 +896,22 @@ class UserController extends Controller
             $garage_slots_update->no_of_free_slots=$no_of_free_slots;
             $garage_slots_update->save();
         }
-        // update  slot state to zero
-        MakeReservation::where('slot', $slot)
-            ->where('long', $long)->where('lat',$lat)
-            ->update(['state' => 0]);
+        // change the state of slot in GragesSlots table
+        $slot_id = grageSlotsModel::where('garage_id',$garag_id)->where('slot',$slot)->value('id');
+        $slot = grageSlotsModel::find($slot_id);
+        $slot->state = 1;  // indicate it is free ;
+        $slot->save();
 
-        return 'done'; // this fuction should return nothing
+        //4- TEll RAsp to Cancel reservation
+        // send to Rasp to cancel reservation
+        $client = new Client();
+        $res = $client->request('GET', '127.0.0.1:8000/api/test/'.$slot);
+        // echo (string)$res->getBody();
 
+        // 5- delete reservation
+        $reservation_id = MakeReservation::where('long',$long)->where('lat',$lat)->where('slot',$slot);
+        $res = MakeReservation::find($reservation_id);
+        $res->delete();
     }
 
 
