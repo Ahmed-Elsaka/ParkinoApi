@@ -27,15 +27,10 @@ use Illuminate\Support\Facades\DB;
 use Mockery\Exception;
 use phpDocumentor\Reflection\Types\Null_;
 
+
 class UserController extends Controller
 {
-    // test api work function
-    public function work()
-    {
-        return "its working";
-    }
     // Phone API
-    // Resource function
     public function registerLoginREs( $status,$requestType,$message,Request $request){
         // return model to resouce depend on login or register
         $login = new Login();
@@ -62,7 +57,7 @@ class UserController extends Controller
 
     }
     public function register(Request $request, User $user){
-       // $count = $user->find($request->email);
+        //inputs [username, email, password, phone_number]
         try{
             $bu = $user->where('email', $request->email)->count();
             if($bu <1){
@@ -71,7 +66,6 @@ class UserController extends Controller
                     'email' => $request->email,
                     'password' => Hash::make($request->password),
                     'phone_number'=>$request->phone_number,
-                    //'password' => Hash::make($request->password),
                 ]);
                 return $this->registerLoginREs(1,'registerRequest',"User Registerd Successfully",$request);
             }
@@ -83,20 +77,8 @@ class UserController extends Controller
             ".$e,$request);
         }
 
-    }
+    } //[ Tested ]
     public function login(Request $request,User $user){
-        //old code
-        /*
-        $password = $request->password;
-        $bu = $user->where('email', $request->email)->where('password' , $password)->count();
-        if($bu){
-            return $this->registerLoginREs(1,'loginRequest',"Welcome",$request);
-        }else{
-
-            return $this->registerLoginREs(0,'loginRequest',"Wrong Email Or Psssword",$request);
-        } // end of old code
-        */
-        //new code
         try{
             $userPass = $request->password;
             $truePass = $user->where('email',$request->email)->value('password');
@@ -111,9 +93,9 @@ class UserController extends Controller
         }
 
 
-    }
-    // Add bind CArd Resource
+    } //[ Tested]
     public function BindAddCardREs( $status,$requestType,$message,Request $request){
+        // this is bind card resource
         $bindcard = new BindCard();
         $user = new User();
         if($requestType='bindCard'){
@@ -123,7 +105,7 @@ class UserController extends Controller
         }else{
 
         }
-    }
+    } // [ Tested ]
     public function bindcard(Request $request,User $user,BindCard $bindCard){
         /* old code
         $password  = DB::table('users')->where('id',$request->user_id)->value('password');  // Read user password
@@ -149,40 +131,69 @@ class UserController extends Controller
         */
         // new code
 
+        /* inputs [user_id, password, qrcode]
+         * scenario:
+         *  1- check if the password correct
+         *  2- check if the qrcode already in the system or not and get relative RFID number
+         *  3- check if the state of QrCode not used before and if the card no in the system or not
+         *  4- add this card to user_cards and change the state of this card to 1 [used bedore]
+         */
         try{
-            $password  = DB::table('users')->where('id',$request->user_id)->value('password');  // Read user password
-            $qrcode  = DB::table('user_cards')->where('card_no',$request->qrcode)->value('card_no'); // Read QrCode from user  Cards
-            $systemCard = DB::table('cards')->where('qr_no',$request->qrcode)->value('qr_no'); // check if the Card in systems Cards Table
-            if($qrcode !=null){
-                return $this->BindAddCardREs( 0,'bindCard',"Card Already Binded", $request);
+            $userPassword  = DB::table('users')->where('id',$request->user_id)->value('password');  // Read user password
+            // 1- check if the password is correct
+            if(Hash::check($request->password,$userPassword)){
+                // 2- check if the card exist in the system or not
+                $systemCard = DB::table('cards')->where('qr_no',$request->qrcode)->value('qr_no'); // check if the Card in systems Cards Table
+                if($systemCard ==null){ // the card is not in the system
+                    return $this->BindAddCardREs( 3,'bindCard',"Invalid Card", $request);
+                }else{ // the card is in the system
+                    // check if the card has been used before
+                    $cardState = $systemCard = DB::table('cards')->where('qr_no',$request->qrcode)->value('state');
+                    if($cardState == 0){ // the card has not used before
+                        $RFID_no = DB::table('cards')->where('qr_no',$request->qrcode)->value('rfid_no');  // get RFID no related to this Qrcode
+                        // add the used to user
+                        $bindCard->create([
+                            'user_id' => $request->user_id,
+                            'card_no' => $RFID_no,
+                        ]);
+                        // change the state of the card to be used
+                        SystemCards::where('qr_no', $request->qrcode)->update(['state' => 1]);
+                        return $this->BindAddCardREs( 1,'bindCard',"This card has been add successfully", $request);
+
+                    }else{ // the card has been used before
+                        return $this->BindAddCardREs( 0,'bindCard',"this card has been used before", $request);
+                    }
+                }
+            }else{
+                return $this->BindAddCardREs( 2,'bindCard',"Wrong Password", $request);
             }
-            elseif (Hash::check($request->password , $password) && $systemCard ==$request->qrcode){
-                $bindCard->create([
-                    'user_id' => $request->user_id,
-                    'card_no' => $request->qrcode,
-                ]);
-                SystemCards::where('qr_no',$request->qrcode)->delete(); //delete the card from the system
-                return $this->BindAddCardREs( 1,'bindCard',"Card Add Successfully", $request);
-            }
-            elseif($password != $request->password){
-                return $this->BindAddCardREs( 2,'bindCard',"wrong password", $request);
-            }
-            elseif($systemCard ==null){
-                return $this->BindAddCardREs( 3,'bindCard',"Invalid Card", $request);
-            }
+
         }catch (\Exception $e){
             return $this->BindAddCardREs( 3,'bindCard',"something wrong in bindcard function"
                 .$e, $request);
         }
-    }
+    } // [ Tested ]
     public function unbindcard(Request $request,User $user,BindCard $bindCard){
+        /*
+         * inputs [user_id, password, card_id(RFID_NO)]
+         * Scenario:
+         *  - the user select from his/her cards from mobile application :
+         *      1- check if the password correct :
+         *          YES: delete the card from user cards
+         *          NO : tell him/her wrong password
+         */
         try{
-            $password  = DB::table('users')->where('id',$request->user_id)->value('password');
-            $qrcode  = DB::table('user_cards')->where('user_id',$request->user_id)->where('card_no',$request->qrcode)->value('card_no');
-            if (Hash::check($request->password , $password)&& $qrcode ==$request->qrcode){
-                //delete the card from the system
-                $bindCard->where('card_no',$request->qrcode)->delete();
-                return $this->BindAddCardREs( 1,'bindCard',"Card Unbinded Successfully", $request);
+            $userPassword  = DB::table('users')->where('id',$request->user_id)->value('password'); // get user password
+            if (Hash::check($request->password , $userPassword)){ // the password is correct
+                // check if the card owned by this user
+                $RFID_no  = DB::table('user_cards')->where('user_id',$request->user_id)->where('card_no',$request->qrcode)->value('card_no');
+                if($RFID_no != null){  // the user own this card
+                    //delete the card from the system
+                    $bindCard->where('card_no',$RFID_no)->delete();
+                    return $this->BindAddCardREs( 1,'bindCard',"Card Unbinded Successfully", $request);
+                }else{ // this card not owned by this user
+                    return $this->BindAddCardREs( 0,'bindCard',"Invalid Card Number", $request);
+                }
             } else{
                 return $this->BindAddCardREs( 0,'bindCard',"Wrong Password", $request);
             }
@@ -191,86 +202,35 @@ class UserController extends Controller
             return $this->BindAddCardREs( 0,'bindCard',"something Wrong in unbindCard function".$e, $request);
         }
 
-    }
-    public function getMyCards(Request $request,User $user,BindCard $bindCard){
-        try{
-            $user_id =  $request->user_id;
-            $query = "select user_id, card_no from user_cards where user_id =".$user_id;
-            $getGrages = json_encode(DB::select($query)) ;
-            return $getGrages;
-        }catch (\Exception $e){
-            $bindcard = new BindCard();
-            $bindcard->status = 0;
-            $bindcard->message = "something Wrong on getMyCards function".$e;
-            return new ChangeInfoResource($bindcard);
-        }
-
-
-    }
-     public function getUserGarages(Request $request,User $user,BindCard $bindCard){
-
-
-         try{
-             $query_str = "SELECT parkingareas.id as garage_id, parkingareas.name as garage_name
-             , parkingareas.no_of_free_slots  as  emptyslots
-             , parkingareas.slots_no as slotnumbers
-             ,parkingareas.lat as latitude 
-             ,parkingareas.garagePhotosFolder as grageURL 
-             ,parkingareas.price, parkingareas.stars
-             , parkingareas.long as longitude
-             , 111.045 * DEGREES(ACOS(COS(RADIANS($request->latitude)) * COS(RADIANS(parkingareas.lat))
-              * COS(RADIANS(parkingareas.long) - RADIANS($request->longitude))
-              + SIN(RADIANS($request->latitude)) * SIN(RADIANS(parkingareas.lat)))) AS distance
-              FROM parkingareas , make_reservations 
-              WHERE make_reservations.lat = parkingareas.lat and 
-              make_reservations.long = parkingareas.long  and 
-              user_id = $request->user_id";
-             $garages = json_encode(DB::select($query_str)) ;
-             return $garages;
-         }catch (\Exception $e){
-             $bindcard = new BindCard();
-             $bindcard->status = 0;
-             $bindcard->message = "something Wrong on getUserGarages function".$e;
-             return new ChangeInfoResource($bindcard);
-         }
-
-
-
-    }
-    /*
-    public function changeInfoRes( $status,$message){
-        $bindcard = new BindCard();
-        if($status ==1){
-            $bindcard->status = 1;
-            $bindcard->message = $message;
-            return new ChangeInfoResource($bindcard);
-        }else{
-            $bindcard->status = 0;
-            $bindcard->message = $message;
-            return $bindcard->toJson();
-            return new ChangeInfoResource($bindcard);
-        }
-
-    }
-    */
+    } //[ Tested ]
     public function ChangePassword(Request $request, User $user){
+        /*
+         * inputs [userid,oldpassword,password]
+         * Scenario:
+         *  1- Check if the password correct :
+         *      NO: tell him wrong password
+         *      YES: check if old password == new password :
+         *          NO : change password
+         *          YES : tell him to change the password because is the same old password
+         */
+
         $bindcard = new BindCard();   // creating resource for json file
         try{
-            // code optimization
-            $user = $user->find($request->userid); // find the user using his/ her id
-            $newPass= Hash::make($request->newpassword); //encrypt new password
             $userPass = $user->where('id',$request->userid)->value('password'); //get user old password
-
-            if(Hash::check( $request->oldpassword, $userPass)  ){// check if old pass == new pass
-                if( Hash::check(  $request->newpassword , $userPass) ){
+            //dd($userPass);
+            $user = $user->find($request->userid); // find the user using his/ her id
+            if(Hash::check($request->oldpassword, $userPass)  ){// check if old pass == new pass
+                if( Hash::check($request->newpassword , $userPass) ){
                     $bindcard->status = 0;
                     $bindcard->message = 'Enter new password';
                     return new ChangeInfoResource($bindcard);
+                }else{
+                    $newPass= Hash::make($request->newpassword); //encrypt new password
+                    $user->where('id',$request->userid)->update(['password'=> $newPass]); // change the password
+                    $bindcard->status = 1;
+                    $bindcard->message = ' password changed successfully';
+                    return new ChangeInfoResource($bindcard);
                 }
-                $user->fill(['password'=> $newPass])->save();
-                $bindcard->status = 1;
-                $bindcard->message = ' password changed successfully';
-                return new ChangeInfoResource($bindcard);
             }
             else {
                 $bindcard->status = 0;
@@ -282,32 +242,9 @@ class UserController extends Controller
             $bindcard->message = 'somthing Wrong in changePassword Function'.$e;
             return new ChangeInfoResource($bindcard);
         }
-
-
-
-        /* old Code
-
-        $id = $request->userid;
-        $current_password  = DB::table('users')->where('id',$request->userid)->value('password');
-        $newPassword = $request->newpassword;
-        if($current_password== $request->oldpassword){
-            $current_user = User::find($id);
-            if($current_user) {
-                $current_user->password = $newPassword;
-                $current_user->save();
-            }
-            $bindcard->status = 1;
-            $bindcard->message = ' password changed successfully';
-            return new ChangeInfoResource($bindcard);
-        }
-        $bindcard->status = 0;
-        $bindcard->message = 'wrong password';
-        return new ChangeInfoResource($bindcard);
-        */
-    }
+    }  //[ Tested ]
     public function ChangeUsername(Request $request, User $user){
         $bindcard = new BindCard();
-
         try{
             $id = $request->userid;
             $current_user = User::find($id);
@@ -379,7 +316,6 @@ class UserController extends Controller
         try{
             // get user info
             $count = $user->where('id',$request->userid)->count();
-
             // and not have any relation with DB model
             if($count >0){
                 $userName = $user->where('id',$request->userid)->value('name');      // get user Name
@@ -401,6 +337,51 @@ class UserController extends Controller
         }catch (\Exception $e){
             $login->status = 0;
         }
+
+    }
+    public function getMyCards(Request $request,User $user,BindCard $bindCard){
+        try{
+            $user_id =  $request->user_id;
+            $query = "select user_id, card_no from user_cards where user_id =".$user_id;
+            $getGrages = json_encode(DB::select($query)) ;
+            return $getGrages;
+        }catch (\Exception $e){
+            $bindcard = new BindCard();
+            $bindcard->status = 0;
+            $bindcard->message = "something Wrong on getMyCards function".$e;
+            return new ChangeInfoResource($bindcard);
+        }
+
+
+    }
+    public function getUserGarages(Request $request,User $user,BindCard $bindCard){
+
+
+        try{
+            $query_str = "SELECT parkingareas.id as garage_id, parkingareas.name as garage_name
+             , parkingareas.no_of_free_slots  as  emptyslots
+             , parkingareas.slots_no as slotnumbers
+             ,parkingareas.lat as latitude 
+             ,parkingareas.garagePhotosFolder as grageURL 
+             ,parkingareas.price, parkingareas.stars
+             , parkingareas.long as longitude
+             , 111.045 * DEGREES(ACOS(COS(RADIANS($request->latitude)) * COS(RADIANS(parkingareas.lat))
+              * COS(RADIANS(parkingareas.long) - RADIANS($request->longitude))
+              + SIN(RADIANS($request->latitude)) * SIN(RADIANS(parkingareas.lat)))) AS distance
+              FROM parkingareas , make_reservations 
+              WHERE make_reservations.lat = parkingareas.lat and 
+              make_reservations.long = parkingareas.long  and 
+              user_id = $request->user_id";
+            $garages = json_encode(DB::select($query_str)) ;
+            return $garages;
+        }catch (\Exception $e){
+            $bindcard = new BindCard();
+            $bindcard->status = 0;
+            $bindcard->message = "something Wrong on getUserGarages function".$e;
+            return new ChangeInfoResource($bindcard);
+        }
+
+
 
     }
     public function getGarages(Request $request, ParkingArea $parkingArea){
@@ -603,93 +584,126 @@ class UserController extends Controller
     {
         $long =$parkingArea->where('id',$grage_id)->value('long');
         $lat = $parkingArea->where('id',$grage_id)->value('lat');
+        $query = "select  users.name,make_reservations.RFID_no as RFID , make_reservations.slot from users
+                  , make_reservations where users.id = make_reservations.user_id and make_reservations.long=".$long."
+                   and make_reservations.lat=".$lat. " and  make_reservations.state = 0";
+
+        /*
         $query = "select  users.name, users.points as Hours ,
                   make_reservations.slot,make_reservations.RFID_no, make_reservations.created_at as startTime from users
                   , make_reservations where users.id = make_reservations.user_id and make_reservations.long=".$long."
                    and make_reservations.lat=".$lat. " and  make_reservations.state = 0";
+        */
         $data = DB::select($query);
-         $n  = count($data);
+        /*
+        $n= count($data);
          //update state of returned rows
-        for( $i = 0 ; $i < $n ; $i++){
-            MakeReservation::where('slot', $data[$i]->slot)
-                ->where('RFID_no', $data[$i]->RFID_no)
-                ->update(['state' => 1]);
-        }
+            for( $i = 0 ; $i < $n ; $i++){
+                MakeReservation::where('slot', $data[$i]->slot)
+                    ->where('RFID_no', $data[$i]->RFID)
+                    ->update(['state' => 1]);
+            }
+        */
+
+
         $newReserved = json_encode($data) ;
         return $newReserved;
     }
-    // reserve
+    // reserve slot on garage
     public function reserveSlot(Request $request, MakeReservation $makeReservation)
     {
         /*
-         * inputs [ grage_id, user_id, reserve_type]
+         * inputs [ garage_id, user_id,password,user_rfid, reserve_type]
+         *  0- check user password
          *  1- check if the use has no points -> tell him/her you must charge first
          *  2- get free slot from GragesSlots Table and change it is state to 0 (busy);
          *  3- insert reservation in reservation table
+         *  4- increase no of free slots on parkingArea Table
+         * NOTES:
+         *      Garage Slots start from 0 index
          *
          */
+        // 0- check user password
         $user = User::find($request->user_id);
         $points = $user->points;
         $bindcard = new BindCard();  // just a model for json
-        if($points <1){
-            // you should charge
-            $bindcard->status = 0 ;
-            $bindcard->message = "you don't have enough balance , you should charge";
-            return new ChangeInfoResource($bindcard);
-        }else {
-            // 2- get free slot from GragesSlots Table and change it is state to 0 (busy);
-            $slot_id = grageSlotsModel::where('garage_id',$request->garage_id)->where('state',1)->value('slot');
-            $slot = grageSlotsModel::find($slot_id);
-            $slot->state = 0 ; // make this slot busy ;
-            $slot_num = $slot->slot;  // reserved slot number ;
-            $slot-save();
-            dd($slot_num);
-            // 3- insert reservation in reservation table
-            $long = ParkingArea::where('id',$request->garage_id)->value('long');
-            $lat = ParkingArea::where('id',$request->garage_id)->value('lat');
-            $reservation_type = $request->reserve_type ; // for hours mode
-            $hourly_tire = 0 ;
-            $monthly_tire = 0 ;
-            $annually_tire = 0 ;
-            $daily_tire = 0;
-            if($reservation_type == 0){ // hourly mode
-                $hourly_tire = 1;
-            }elseif ($reservation_type == 1){// monthly mode
-                $monthly_tire = 1;
-            }elseif ($reservation_type == 2){// annually mode
-                $annually_tire = 1;
-            }elseif ($reservation_type == 3){// daily mode
-                $daily_tire = 1;
+        $userPass = $user->where('id',$request->user_id)->value('password'); //get user old password
+        if(Hash::check( $request->password, $userPass)  ) {// check if old pass == new pass
+            // check if the user has this card
+            $card_test = DB::table('user_cards')->where('card_no',$request->user_rfid)->count();
+            if($card_test > 0 ){
+                // check if user has enough points to charge
+                if ($points < 1) {
+                    // you should charge
+                    $bindcard->status = 0;
+                    $bindcard->message = "you don't have enough balance , you should charge";
+                    return new ChangeInfoResource($bindcard);
+                }
+                else {
+                    // 2- get free slot from GragesSlots Table and change it is state to 0 (busy);
+                    $slot_id = grageSlotsModel::where('garage_id', $request->garage_id)->where('state', 1)->value('id');
+                    $slot = grageSlotsModel::find($slot_id);
+                    $slot->state = 0; // make this slot busy ;
+                    $slot_num = $slot->slot;  // reserved slot number ;
+                    $slot->save();
+                    // 3- insert reservation in reservation table
+                    $long = ParkingArea::where('id', $request->garage_id)->value('long');
+                    $lat = ParkingArea::where('id', $request->garage_id)->value('lat');
+                    $reservation_type = $request->reserve_type; // for hours mode
+                    $hourly_tire = 0;
+                    $monthly_tire = 0;
+                    $annually_tire = 0;
+                    $daily_tire = 0;
+                    if ($reservation_type == "111") { // hourly mode
+                        $hourly_tire = 1;
+                    } elseif ($reservation_type == "333") {// monthly mode
+                        $monthly_tire = 1;
+                    } elseif ($reservation_type == "444") {// annually mode
+                        $annually_tire = 1;
+                    } elseif ($reservation_type == "222") {// daily mode
+                        $daily_tire = 1;
+                    }
+                    $makeReservation->create([
+                        'long' => $long,
+                        'lat' => $lat,
+                        'user_id' => $request->user_id,
+                        'annually_tier' => $annually_tire,
+                        'monthly_tier' => $monthly_tire,
+                        'daily_tier' => $daily_tire,
+                        'hourly_tier' => $hourly_tire,
+                        'state' => 0, // indicate the slot is not locked
+                        'RFID_no' => $request->user_rfid,
+                        'slot' =>$slot_num
+                    ]);
+                    // update no of free slots in parking area
+                    //decrease number of free slots for this garage
+                    $no_of_free_slots = DB::table('parkingareas')->where('id',$request->garage_id)
+                        ->value('no_of_free_slots');
+                    $no_of_free_slots--;
+                    $garage_slots_update=ParkingArea::find($request->garage_id);
+                    if($garage_slots_update){
+                        $garage_slots_update->no_of_free_slots=$no_of_free_slots;
+                        $garage_slots_update->save();
+                    }
+                    $bindcard->status = 1;
+                    $bindcard->message = "Garage reserved successfully";
+                    return new ChangeInfoResource($bindcard);
+                }
+            }else{
+                $bindcard->status = 0;
+                $bindcard->message = "invalid Card";
+                return new ChangeInfoResource($bindcard);
             }
-            $makeReservation->create([
-                'long' => $long,
-                'lat' =>$lat,
-                'user_id'=>$request->user_id,
-                'annually_tier' => $annually_tire,
-                'monthly_tier' => $monthly_tire,
-                'daily_tier' => $daily_tire,
-                'hourly_tier' =>$hourly_tire,
-                'state' => 0, // indicate the slot is not locked
-            ]);
+        }else{
+            $bindcard->status = 0;
+            $bindcard->message = "Wrong Password";
+            return new ChangeInfoResource($bindcard);
         }
-
-            $bu = $user->where('email', $request->email)->count();
-            if($bu <1){
-                $user->create([
-                    'name' => $request->username,
-                    'email' => $request->email,
-                    'password' => Hash::make($request->password),
-                    'phone_number'=>$request->phone_number,
-                    //'password' => Hash::make($request->password),
-                ]);
-
-
-        }
-
     }
     //search for garage
-    public function searchForGrarage(Request $request)
+    public function searchForGarage(Request $request)
     {
+        $name = $request->Search_text;
         $query_str = "SELECT id as garage_id, name as garage_name
              , no_of_free_slots  as  emptyslots
              , slots_no as slotnumbers
@@ -701,13 +715,13 @@ class UserController extends Controller
               * COS(RADIANS(parkingareas.long) - RADIANS($request->longitude))
               + SIN(RADIANS($request->latitude)) * SIN(RADIANS(lat)))) AS distance
               FROM parkingareas 
-              where no_of_free_slots >= 1 and name LIKE $request->name
+              where   parkingareas.name LIKE '%$name%' and  no_of_free_slots >= 1 
                ORDER BY distance
                 ASC LIMIT 0,5
             ";
         $garages = json_encode(DB::select($query_str)) ;
         return $garages;
-    }
+    } //[ Tested ]
     // Cancel Reservation
     public function CancelReservation($reservation_id = 0,$autoCancelation= 0 , $user_id = 0){ // Automatic
         // this function automatic Cancel Reservation when points finished;
@@ -727,9 +741,8 @@ class UserController extends Controller
         $client = new Client();
         $res = $client->request('GET', '127.0.0.1:8000/api/test');
         //echo $res->getStatusCode();  // should return 200
-
         $car_status = (string) $res->getBody();
-        if($car_status == "1"){   // the car is in
+        if($car_status1 == "1"){   // the car is in
             // tell Rasp to lock slot
         }else{  // the car is out
             //1- take balance
@@ -913,16 +926,15 @@ class UserController extends Controller
         $res = MakeReservation::find($reservation_id);
         $res->delete();
     }
+    public function test( Request $request){
 
-
-
-
-    public function test($slot = 0){
-        echo'ian in test '.$slot;
-
+        dd($request->toArray());
+       // dd('iam in test');
+        $client = new Client();
+        $res = $client->request('GET', 'http://102.185.21.102:5000/');
+        //$res = $client->request('GET', '127.0.0.1:8000/api/test/'.$slot_num);
+        dd($res->getStatusCode(), (string)  $res->getBody());
        return 0;
     }
-
-
 
 }

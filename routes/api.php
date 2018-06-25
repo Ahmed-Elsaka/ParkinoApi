@@ -21,16 +21,18 @@ Route::post('/login','UserController@login');
 Route::post('/register','UserController@register');
 Route::post('/bindcard','UserController@bindcard');
 Route::post('/unbindcard','UserController@unbindcard');
-Route::post('/getMyCards','UserController@getMyCards');
-Route::post('/getUserGarages','UserController@getUserGarages');
 Route::post('/ChangePassword','UserController@ChangePassword');
 Route::post('/ChangeUsername','UserController@ChangeUsername');
 Route::post('/ChangeEmail','UserController@changeUserEmail');
 Route::post('/ChangePhoneNumber','UserController@ChangePhoneNumber');
 Route::post('/getGarages','UserController@getGarages');
 Route::post('/userProfileData','UserController@userProfileData'); // fill user profile Activity with data
+Route::post('/getMyCards','UserController@getMyCards');
+Route::post('/getUserGarages','UserController@getUserGarages');
 Route::post('/charge','UserController@charge'); // fill user profile Activity with data
 Route::post('/feedback','UserController@feedback'); // send feedback
+Route::post('/reserveSlot','UserController@reserveSlot'); // send feedback
+Route::post('/searchForGarage','UserController@searchForGarage'); // send feedback
 
 
 
@@ -48,7 +50,7 @@ Route::get('/getGarageClients/{garage_id}','UserController@getGarageClients');
 
 
 // Test
-Route::get('/test/{slot?}','UserController@test');
+Route::post('/test/{slot?}','UserController@test');
 
 
 

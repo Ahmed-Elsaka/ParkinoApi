@@ -15,6 +15,6 @@ class MakeReservation extends Model
         'monthly_tier',
         'daily_tier',
         'hourly_tier',
-        'state','RFID_no'
+        'state','RFID_no','slot'
     ];
 }
