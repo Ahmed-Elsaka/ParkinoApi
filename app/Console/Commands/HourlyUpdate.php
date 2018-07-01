@@ -40,8 +40,9 @@ class HourlyUpdate extends Command
      */
     public function handle(User $user)
     {
+        $cancelled_reservations_slots = array();
 
-        $query = "select id, user_id from make_reservations";
+        $query = "select id, user_id , slot from make_reservations";
         $users = DB::select($query);
 
         foreach ($users as $currentUser){
@@ -56,15 +57,15 @@ class HourlyUpdate extends Command
             $Curr_user = $user->find($currentUser->user_id);
             if($Curr_user->points == $Curr_user->consumed_points){
                 // take his balance and cancel reservation
-               app('App\Http\Controllers\UserController')
-                   ->CancelReservation($currentUser->id,1,60);
+                array_push($cancelled_reservations_slots,$currentUser->slot);
 
             }else {
                 $Curr_user->consumed_points +=1;
-               // print('im in else ');
                 $Curr_user->save();
             }
         }
+        app('App\Http\Controllers\UserController')
+            ->CancelReservation($cancelled_reservations_slots);  // $cancelled_reservations == reservation id
         $this->info('Hour balance update has been done successfully');
     }
 }

@@ -33,6 +33,15 @@ Route::post('/charge','UserController@charge'); // fill user profile Activity wi
 Route::post('/feedback','UserController@feedback'); // send feedback
 Route::post('/reserveSlot','UserController@reserveSlot'); // send feedback
 Route::post('/searchForGarage','UserController@searchForGarage'); // send feedback
+Route::post('/phoneCancellation','UserController@phoneCancellation'); // cancel using phone
+
+
+
+// test guzzle
+Route::get('/testGuzzel','UserController@testGuzzel'); // cancel using phone
+
+
+
 
 
 
@@ -42,7 +51,8 @@ Route::get('/work','UserController@work');
 
 
 // Rasp Routing
-Route::get('/getNewReservations/{garage_id}','UserController@getNewReservations'); // send feedback40
+Route::POST('/getNewReservations','UserController@getNewReservations'); // send feedback40
+Route::POST('/raspCancellation','UserController@raspCancellation'); // send feedback40
 Route::get('/CarWentOut/{garage_id}/{RFID_card}','UserController@CarWentOut');
 
 Route::get('/getGarageClients/{garage_id}','UserController@getGarageClients');
@@ -50,7 +60,7 @@ Route::get('/getGarageClients/{garage_id}','UserController@getGarageClients');
 
 
 // Test
-Route::post('/test/{slot?}','UserController@test');
+Route::post('/test','UserController@test');
 
 
 
