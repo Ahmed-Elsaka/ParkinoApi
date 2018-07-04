@@ -22,6 +22,7 @@ use App\User;
 use Carbon\Carbon;
 use GuzzleHttp\Client;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -185,6 +186,24 @@ class UserController extends Controller
          */
         try{
             $userPassword  = DB::table('users')->where('id',$request->user_id)->value('password'); // get user password
+            $count = MakeReservation::where('RFID_no',$request->qrcode)->where('user_id',$request->user_id)->count();
+            if($count >0){
+                return $this->BindAddCardREs( 0,'bindCard',"Already used", $request);
+            }else{
+                if (Hash::check($request->password , $userPassword)){ // the password is correct
+                    // check if the card owned by this user
+                    $RFID_no  = DB::table('user_cards')->where('user_id',$request->user_id)->where('card_no',$request->qrcode)->value('card_no');
+                    if($RFID_no != null){  // the user own this card
+                        //delete the card from the system
+                        $bindCard->where('card_no',$RFID_no)->delete();
+                        return $this->BindAddCardREs( 1,'bindCard',"Card Unbinded Successfully", $request);
+                    }else{ // this card not owned by this user
+                        return $this->BindAddCardREs( 0,'bindCard',"Invalid Card Number", $request);
+                    }
+                } else{
+                    return $this->BindAddCardREs( 0,'bindCard',"Wrong Password", $request);
+                }
+            }
             if (Hash::check($request->password , $userPassword)){ // the password is correct
                 // check if the card owned by this user
                 $RFID_no  = DB::table('user_cards')->where('user_id',$request->user_id)->where('card_no',$request->qrcode)->value('card_no');
@@ -215,6 +234,8 @@ class UserController extends Controller
          *          YES : tell him to change the password because is the same old password
          */
 
+
+
         $bindcard = new BindCard();   // creating resource for json file
         try{
             $userPass = $user->where('id',$request->userid)->value('password'); //get user old password
@@ -226,7 +247,7 @@ class UserController extends Controller
                     $bindcard->message = 'Enter new password';
                     return new ChangeInfoResource($bindcard);
                 }else{
-                    $newPass= Hash::make($request->newpassword); //encrypt new password
+                    $newPass= Hash::make($request->password); //encrypt new password
                     $user->where('id',$request->userid)->update(['password'=> $newPass]); // change the password
                     $bindcard->status = 1;
                     $bindcard->message = ' password changed successfully';
@@ -273,6 +294,12 @@ class UserController extends Controller
             $user = $user->find($request->userid); // find the user using his/ her id
             $userPass = $user->where('id',$request->userid)->value('password'); //get user old password
             if(Hash::check( $request->password, $userPass)  ){// check if old pass == new pass
+                $user_email = $user->where('email',$request->email)->count();
+                if($user_email>0){
+                    $bindcard->status = 0;
+                    $bindcard->message = ' Email Already used';
+                    return new ChangeInfoResource($bindcard);
+                }
                 $user->fill(['email'=> $request->email])->save();
                 $bindcard->status = 1;
                 $bindcard->message = ' Email changed successfully';
@@ -589,8 +616,8 @@ class UserController extends Controller
         $query_str = "SELECT id as garage_id, name as garage_name
              , no_of_free_slots  as  emptyslots
              , slots_no as slotnumbers
-             ,lat as latitude 
-             ,garagePhotosFolder as grageURL 
+             ,parkingareas.lat as latitude 
+             ,garagePhotosFolder as grageURL
              ,price, stars
              , parkingareas.long as longitude
              , 111.045 * DEGREES(ACOS(COS(RADIANS($request->latitude)) * COS(RADIANS(lat))
@@ -606,7 +633,7 @@ class UserController extends Controller
     } //[ Tested ]
     public function CancelReservation($cancelled_reservations_slots ){ // Automatic
 
-        print('iam in cancel Reservation');
+        // print('iam in cancel Reservation');
         // this function automatic Cancel Reservation when points finished;
 
         /*
@@ -625,23 +652,31 @@ class UserController extends Controller
 
        // send post request with slots
 
-        $client = new Client([
-            'headers' => [ 'Content-Type' => 'application/json' ]
-        ]);
+        $url = $this->GetRaspUrl().'IsInside';//API Url
+        $ch = curl_init($url);//Initiate cURL.
+        $jsonDataEncoded = json_encode( [
+            'slot' => $cancelled_reservations_slots
+        ]);//Encode the array into JSON.
+        curl_setopt($ch, CURLOPT_POST, 1);//Tell cURL that we want to send a POST request.
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonDataEncoded);//Attach our encoded JSON string to the POST fields.
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));//Set the content type to application/json
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // time out
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5); //timeout in seconds
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true );
+        $result = curl_exec($ch); // EXECUTE:
+        if(!$result){
+            $bindcard = new BindCard();
+            $bindcard->status = 0;
+            $bindcard->message = "Connection Failure";
+        }
+        $data = json_decode($result,true);
+        //dd($data['status'][0],$data,'size of data = '.sizeof($data),'size of status '.sizeof($data['status']));
+        curl_close($ch);
 
-        $response = $client->post($this->GetRaspUrl().'IsInside',
-            ['body' => json_encode(
-                [
-                    'slot' => $cancelled_reservations_slots
-                ]
-            )]
-        );
-        $result =json_decode($response->getBody()) ;
-
-       $status = $result->status;
-       print ('returned from IsInside');
-       print_r($status);
-        $array_length = sizeof($result->status);
+       $status = $data['status'];
+       //print ('returned from IsInside');
+      // print_r($status);
+        $array_length = sizeof($data['status']);
         $slots_cancelled = array();  // cancel these slots from garage
         for($i = 0 ; $i < $array_length ; $i++){
             if($status[$i] == "1"){ // the car in
@@ -680,16 +715,22 @@ class UserController extends Controller
         $array_length = sizeof($slots_cancelled);
         if($array_length > 0){  // send request only if there are free slots
             // send the slots you want to cancel to rasp
-            $client = new Client([
-                'headers' => [ 'Content-Type' => 'application/json' ]
-            ]);
-            $response = $client->post($this->GetRaspUrl().'remove',
-                ['body' => json_encode(
-                    [
-                        'slot' => $slots_cancelled
-                    ]
-                )]
-            );
+            $url = $this->GetRaspUrl().'remove';//API Url
+            $ch = curl_init($url);//Initiate cURL.
+            $jsonDataEncoded = json_encode( [
+                'slot' => $slots_cancelled
+            ]);//Encode the array into JSON.
+            curl_setopt($ch, CURLOPT_POST, 1);//Tell cURL that we want to send a POST request.
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonDataEncoded);//Attach our encoded JSON string to the POST fields.
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));//Set the content type to application/json
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10); // time out
+            curl_setopt($ch, CURLOPT_TIMEOUT, 10); //timeout in seconds
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true );
+            $result = curl_exec($ch); // EXECUTE:
+            if(!$result){die("Connection Failure");}
+            $data = json_decode($result,true);
+            //dd($data['status'][0],$data,'size of data = '.sizeof($data),'size of status '.sizeof($data['status']));
+            curl_close($ch);
             // delete reservation from table
             for($i = 0 ; $i < $array_length ; $i++){
                 // delete reservation
@@ -706,8 +747,6 @@ class UserController extends Controller
 
             }
         }
-
-
 
     } //Automatic Cancellation
     public function phoneCancellation( Request $request)
@@ -732,31 +771,33 @@ class UserController extends Controller
         $bindcard = new BindCard();  // just for resource
         if(Hash::check($request->password,$user_password)){ // check if password is correct
             // ask if the car in
+
             $slot = array($request->slot_num);
 
+            $url = $this->GetRaspUrl().'IsInside';//API Url
+            $ch = curl_init($url);//Initiate cURL.
+            $jsonDataEncoded = json_encode( [
+                'slot' => $slot
+            ]);//Encode the array into JSON.
+            curl_setopt($ch, CURLOPT_POST, 1);//Tell cURL that we want to send a POST request.
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonDataEncoded);//Attach our encoded JSON string to the POST fields.
+            curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));//Set the content type to application/json
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // time out
+            curl_setopt($ch, CURLOPT_TIMEOUT, 5); //timeout in seconds
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true );
+            $result = curl_exec($ch); // EXECUTE:
 
+            if(!$result){
+                $bindcard = new BindCard();
+                $bindcard->status = 0;
+                $bindcard->message = ' connection Faild';
+                return new ChangeInfoResource($bindcard);
+            }
+            $data = json_decode($result,true);
+            //dd($data['status'][0],$data,'size of data = '.sizeof($data),'size of status '.sizeof($data['status']));
+            curl_close($ch);
 
-
-
-
-            $client = new Client([
-                'headers' => [ 'Content-Type' => 'application/json' ]
-            ]);
-
-
-            $response = $client->post($this->GetRaspUrl().'IsInside',
-                ['body' => json_encode(
-                    [
-                        'slot' => $slot
-                    ]
-                )],
-                ['timeout' => 1]
-            );
-
-            return 'hi sayed';
-
-            $result =json_decode($response->getBody()) ;
-            $result = $result->status;
+            $result = $data['status'];
             $bindcard = new BindCard();
             if($result[0] == "1"){  // the car is in
                 // calculate required points to cancel reservation
@@ -785,19 +826,28 @@ class UserController extends Controller
                     return new ChangeInfoResource($bindcard);
 
                 }else{ // send the request to rasp to open slot
-                    $client = new Client([
-                        'headers' => [ 'Content-Type' => 'application/json' ],
-                        'timeout'  => 0.0
-                    ]);
+                    $url = '192.168.1.15:8000/test';//API Url
+                    $ch = curl_init($url);//Initiate cURL.
+                    $jsonDataEncoded = json_encode( [
+                        'slot' => $request->slot_num
+                    ]);//Encode the array into JSON.
+                    curl_setopt($ch, CURLOPT_POST, 1);//Tell cURL that we want to send a POST request.
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonDataEncoded);//Attach our encoded JSON string to the POST fields.
+                    curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));//Set the content type to application/json
+                    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // time out
+                    curl_setopt($ch, CURLOPT_TIMEOUT, 5); //timeout in seconds
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true );
+                    $result = curl_exec($ch); // EXECUTE:
+                    if(!$result){
 
-                    $response = $client->post('192.168.1.15:8000/test',
-                        ['body' => json_encode(
-                            [
-                                'slot' => $request->slot_num
-                            ]
-                        )]
-                    );
-
+                        $bindcard = new BindCard();
+                        $bindcard->status = 0;
+                        $bindcard->message = "Connection Failure";
+                        return new ChangeInfoResource($bindcard);
+                    }
+                    $data = json_decode($result,true);
+                    //dd($data['status'][0],$data,'size of data = '.sizeof($data),'size of status '.sizeof($data['status']));
+                    curl_close($ch);
 
                     $bindcard->status = 1;
                     $bindcard->message = 'Press on push button during 5 min';
@@ -836,20 +886,33 @@ class UserController extends Controller
                 // remove the reservation from make_reservation table
                 $reservation_id= DB::table('make_reservations')->where('long',$long)
                     ->where('lat',$lat)->where('user_id',$request->user_id)
-                    ->where('slot',$request->slot)->value('id');
-                $reservation = MakeReservation::find($reservation_id);
-                $reservation->delete();
+                    ->where('slot',$request->slot)->delete(); // changed value('id') => delete()
+                //$reservation = MakeReservation::find($reservation_id);
+               // $reservation->delete();
                 // tell the rasp to delete this reservation from its database
-                $client = new Client([
-                    'headers' => [ 'Content-Type' => 'application/json' ]
-                ]);
-                $response = $client->post($this->GetRaspUrl().'remove',
-                    ['body' => json_encode(
-                        [
-                            'slot' => $request->slot
-                        ]
-                    )]
-                );
+
+                $url = $this->GetRaspUrl().'remove';//API Url
+                $ch = curl_init($url);//Initiate cURL.
+                $jsonDataEncoded = json_encode( [
+                    'slot' => $request->slot
+                ]);//Encode the array into JSON.
+                curl_setopt($ch, CURLOPT_POST, 1);//Tell cURL that we want to send a POST request.
+                curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonDataEncoded);//Attach our encoded JSON string to the POST fields.
+                curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));//Set the content type to application/json
+                curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // time out
+                curl_setopt($ch, CURLOPT_TIMEOUT, 5); //timeout in seconds
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true );
+                $result = curl_exec($ch); // EXECUTE:
+                if(!$result){
+
+                    $bindcard = new BindCard();
+                    $bindcard->status = 0;
+                    $bindcard->message = "Connection Failure";
+                    return new ChangeInfoResource($bindcard);
+                }
+                $data = json_decode($result,true);
+                //dd($data['status'][0],$data,'size of data = '.sizeof($data),'size of status '.sizeof($data['status']));
+                curl_close($ch);
 
                 //increase number of free slots for this garage
                 $no_of_free_slots = DB::table('parkingareas')->where('id',$request->garage_id)
@@ -964,15 +1027,45 @@ class UserController extends Controller
     } //[ Not tested by rasb ]
     // For Testing
     public function test( Request $request){
-        return 'iam in test function ';
+
+        $ip = trim(shell_exec("dig +short myip.opendns.com @resolver1.opendns.com"));
+        return $ip;
+        $url = 'http://192.168.1.15:6000/api/testGuzzel';//API Url
+        $ch = curl_init($url);//Initiate cURL.
+        //The JSON data.
+        $jsonData = array(
+            'username' => 'Fuck you',
+            'password' => 'Elsaka'
+        );
+        $jsonDataEncoded = json_encode(['slots' => $jsonData]);//Encode the array into JSON.
+        curl_setopt($ch, CURLOPT_POST, 1);//Tell cURL that we want to send a POST request.
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $jsonDataEncoded);//Attach our encoded JSON string to the POST fields.
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));//Set the content type to application/json
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5); // time out
+        curl_setopt($ch, CURLOPT_TIMEOUT, 5); //timeout in seconds
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true );
+        $result = curl_exec($ch); // EXECUTE:
+        if(!$result){
+            $bindcard = new BindCard();
+            $bindcard->status = 0;
+            $bindcard->message = "Connection Failure";
+        }
+        $data = json_decode($result,true);
+       // dd($data);
+        //dd($data['status'][0],$data,'size of data = '.sizeof($data),'size of status '.sizeof($data['status']));
+        curl_close($ch);
+        return $data;
+
+
     }
-    public function testGuzzel(){
-        $client = new Client();
-        $r = $client->request('POST', 'http:127.0.0.1:8000/api/test', [
-            'json' => ['foo' => 'bar',
-                'ahmed'=>'elsaka']
-        ]);
-        dd($r);
+    public function testGuzzel(Request $request){
+      //  print('im in testGuzzel');
+        return (json_encode($request->toArray()));
+        $bindcard = new BindCard();
+        $bindcard->status = array(2,3,2,2);
+        $bindcard->message = ' Name changed successfully';
+        return new ChangeInfoResource($bindcard);
+
     }
 
     // public URLS

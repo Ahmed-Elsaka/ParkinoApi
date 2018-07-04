@@ -61,6 +61,7 @@ Route::get('/getGarageClients/{garage_id}','UserController@getGarageClients');
 
 // Test
 Route::post('/test','UserController@test');
+Route::post('/testGuzzel','UserController@testGuzzel');
 
 
 
